@@ -1,0 +1,241 @@
+//Inicializacion de Clickers/Triggers
+PL_UP(CLK := xPL);
+PR_UP(CLK := xPR);
+TL_UP(CLK := xTL);
+TR_UP(CLK := xTR);
+DL_UP(CLK := xDL);
+DR_UP(CLK := xDR);
+BFL_UP(CLK := xBFL);
+BFR_UP(CLK := xBFR);
+xStart_UP(CLK := xStart);//Depende de que se encienda desde la pantalla.
+
+DL_DW(CLK := xDL);
+DR_DW(CLK := xDR);
+BFL_DW(CLK := xBFL);
+BFR_DW(CLK := xBFR);
+xStart_DW(CLK := xStart); //Depende de que se pare desde la pantalla o de que se apague el PLC)
+
+//HORA PLC
+v_dwControllerRtcAsUtc := SysTimeRtcGet(pResult := q_udiSysTimeRtcGetDiag);
+q_udiConvertUtcToDateDiag := SysTimeRtcConvertUtcToDate(dwTimestampUtc := v_dwControllerRtcAsUtc, pDate := DTStructure);
+plc_uiYear:=DTStructure.wYear;
+plc_uiMonth:=DTStructure.wMonth;
+plc_uiDay:=DTStructure.wDay;
+plc_uiHour:=DTStructure.wHour;
+plc_uiMinute:=DTStructure.wMinute;
+plc_uiSecond:=DTStructure.wSecond;
+
+//Especificacion de valvulas por etapa (qué válvula se debe activar en cada etapa)
+
+//Presurización Left(se activa unicamente la valvula izq de entrada)
+IF PL_UP.Q THEN 
+	q_xVL_In := TRUE;
+	q_xVL_Out := FALSE;
+	q_xVL_Purge := FALSE;
+END_IF
+
+//Presurización Right(se activa unicamente la valvula derecha de entrada)
+IF PR_UP.Q THEN 
+	q_xVR_In := TRUE;
+	q_xVR_Out := FALSE;
+	q_xVR_Purge := FALSE;
+END_IF
+
+//Transferencia Left (se activan las valvulas izq de entrada y la de salida)
+IF TL_UP.Q THEN 
+	q_xVL_In := TRUE;
+	q_xVL_Out := TRUE;
+END_IF
+
+//Transferencia Right (se activan las valvulas derecha de entrada y la de salida)
+IF TR_UP.Q THEN 
+	q_xVR_In := TRUE;
+	q_xVR_Out := TRUE;
+END_IF
+
+//Despresurización(purga) Left (se activa la valvula izq de Purga y se desactivan las válvulas de entrada y de salida)
+IF DL_UP.Q THEN 
+	q_xVL_Purge := TRUE;
+	q_xVL_In := FALSE;
+	q_xVL_Out := FALSE;
+END_IF
+
+//Despresurización(purga) Right (se activa la valvula derecha de Purga y se desactivan las válvulas de entrada y de salida)
+IF DR_UP.Q THEN 
+	q_xVR_Purge := TRUE;
+	q_xVR_In := FALSE;
+	q_xVR_Out := FALSE;
+END_IF
+
+// ESTA ETAPA QUE ES? (cierra válvula de purga izq)
+IF DL_DW.Q THEN 
+	q_xVL_Purge := FALSE;
+END_IF
+
+// ESTA ETAPA QUE ES? (cierra válvula de purga derecha)
+IF DR_DW.Q THEN 
+	q_xVR_Purge := FALSE;
+END_IF
+
+// BACKFLASH (Abre ambas valvulas de backflash, esta se asociará a cuando usemos el backflash para purgar la columnba izq)
+IF BFL_UP.Q THEN 
+	q_xVL_BF := TRUE;
+	q_xVR_BF := TRUE;
+END_IF
+
+// BACKFLASH (Abre ambas valvulas de backflash, esta se asociará a cuando usemos el backflash para purgar la columnba derecha)
+IF BFR_UP.Q THEN 
+	q_xVL_BF := TRUE;
+	q_xVR_BF := TRUE;
+END_IF
+
+// BACKFLASH (Cierra ambas valvulas de backflash, esta se asociará a cuando usemos el backflash para purgar la columnba izq)
+IF BFL_DW.Q THEN 
+	q_xVL_BF := FALSE;
+	q_xVR_BF := FALSE;
+END_IF
+
+// BACKFLASH (Abre ambas valvulas de backflash, esta se asociará a cuando usemos el backflash para purgar la columnba derecha)
+IF BFR_DW.Q THEN 
+	q_xVL_BF := FALSE;
+	q_xVR_BF := FALSE;
+END_IF
+
+//Condicion de arranque (Si se quedo alguna etapa, que se continue en esa etapa, al contrario, que se comienze desde la primera (state 100))
+IF xStart_UP.Q THEN 
+	IF State_Mem = 0 THEN
+		State := 100;
+	ELSE 
+		State := State_Mem;
+	END_IF
+END_IF
+
+//Parada (En caso de que se pare el ciclo por cualquier motivo, se memoriza en la variable State_Mem el estado actual y se cierran todas las válvulas)
+IF xStart_DW.Q THEN
+	State_Mem := State;
+	q_xVR_In := FALSE;
+	q_xVR_Out := FALSE;
+	q_xVR_Purge := FALSE;
+	q_xVR_BF := FALSE;
+	q_xVL_In := FALSE;
+	q_xVL_Out := FALSE;
+	q_xVL_Purge := FALSE;
+	q_xVL_BF := FALSE;
+END_IF
+
+IF NOT xStart THEN
+	IF State <> 000 THEN 
+		State_Mem := State;
+	END_IF
+	State := 000;
+	xPL := FALSE;
+	xPR := FALSE;
+	xTL := FALSE;
+	xTR := FALSE;
+	xDL := FALSE;
+	xDR := FALSE;
+	xBFL := FALSE;
+	xBFR := FALSE;
+END_IF
+
+//Temporisacion de los ciclos
+CASE State OF 
+	//Estado Default
+	000: xPL := FALSE; xPR := FALSE; xTL := FALSE; xTR := FALSE; xDL := FALSE; xDR := FALSE; xBFL := FALSE; xBFR := FALSE;
+	
+	//Columna Derecha
+		//Presurización derecha
+	100: xPR := TRUE; xDL := TRUE; 
+		 BFL_TON(IN := FALSE, PT := T#0S);
+		 PR_TON(IN := TRUE, PT := REAL_TO_TIME(rPR*1000)); 
+		 DR_TON(IN := FALSE, PT := T#0S);
+		 
+		 IF PR_TON.Q THEN 
+			 State := 101;
+			 PR_TON(IN := FALSE, PT := T#0S);
+		 END_IF
+	
+	101: xTR := TRUE; xBFR := TRUE; xPR := FALSE;
+		 TR_TON(IN := TRUE, PT := REAL_TO_TIME(rTR*1000));
+		 BFR_TON(IN := TRUE, PT := REAL_TO_TIME(rBFR*1000));
+		 DL_TON(IN := TRUE, PT := REAL_TO_TIME(rDL*1000));
+		 
+		 IF BFR_TON.Q THEN
+			 xBFR := FALSE;
+		 END_IF
+		 
+		 IF DL_TON.Q THEN
+			 xDL := FALSE;
+		 END_IF
+		 
+		 IF TR_TON.Q THEN 
+			 xTR := FALSE;
+			 xBFR := FALSE;
+			 State := 200;
+			 TR_TON(IN := FALSE, PT := T#0S);
+		 END_IF
+		 
+	//Columna Izquierda
+	200: xPL := TRUE; xDR := TRUE; 
+		 BFR_TON(IN := FALSE, PT := T#0S);
+		 DL_TON(IN := FALSE, PT := T#0S);
+		 PL_TON(IN := TRUE, PT := REAL_TO_TIME(rPL*1000)); 
+		 
+		 IF PL_TON.Q THEN 
+			 State := 201;
+			 PL_TON(IN := FALSE, PT := T#0S);
+		 END_IF
+	
+	201: xTL := TRUE; xBFL := TRUE; xPL := FALSE;
+		 TL_TON(IN := TRUE, PT := REAL_TO_TIME(rTL*1000));
+		 BFL_TON(IN := TRUE, PT := REAL_TO_TIME(rBFL*1000));
+		 DR_TON(IN := TRUE, PT := REAL_TO_TIME(rDR*1000));
+		 
+		 IF BFL_TON.Q THEN
+			 xBFL := FALSE;
+		 END_IF
+		 
+		 IF DR_TON.Q THEN
+			 xDR := FALSE;
+		 END_IF
+		 
+		 IF TL_TON.Q THEN 
+			 xTL := FALSE;
+			 xBFL := FALSE;
+			 State := 100;
+			 TL_TON(IN := FALSE, PT := T#0S);
+		 END_IF
+END_CASE
+	
+//String management for HMI 
+IF xPL THEN 
+	sStringL := 'PresL'; 
+END_IF
+
+IF xPR THEN 
+	sStringR := 'PresR'; 
+END_IF
+
+IF xTL THEN 
+	sStringL := 'TransL'; 
+END_IF
+
+IF xTR THEN 
+	sStringR := 'TransR'; 
+END_IF
+
+IF xDL THEN 
+	sStringL := 'DepL'; 
+END_IF
+
+IF xDR THEN 
+	sStringR := 'DepR'; 
+END_IF
+
+IF (NOT xPL) AND (NOT xDL) AND (NOT xTL) THEN
+	sStringL := 'StbyL';
+END_IF
+
+IF (NOT xPR) AND (NOT xDR) AND (NOT xTR) THEN
+	sStringR := 'StbyR';
+END_IF
